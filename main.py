@@ -16,6 +16,7 @@ COMMAND = "gaus"
 IMAGE_BYTES = 57600
 height = 120
 width = 160
+TIMEOUT_AFTER_SECONDS = 1.5
 
 while True:
     if COMMAND == "gaus":
@@ -48,17 +49,54 @@ while True:
 
     ESPCAM.write('{};'.format(COMMAND).encode('ascii'))
 
+    startwait = datetime.now()
     waitbytes = bytearray(b'')
-    while True:
+    timeout = False
+
+    while not timeout:
         inbytes = ESPCAM.read(ESPCAM.in_waiting)
         for b in inbytes:
             waitbytes.append(b)
+        
         if b'Prepare File capture' in waitbytes:
-            print("Prepare File capture found")
+            print("Prepare File capture")
             break
 
+        elif b'Camera init failed' in waitbytes:
+            timeout = True
+            print("Camera init failed")
+            break
+
+        elif b'Camera probe failed' in waitbytes:
+            timeout = True
+            print("Camera probe failed")
+            break
+
+        elif b'Failed to get the frame on time!' in waitbytes:
+            timeout = True
+            print("Failed to get the frame on time!")
+            break
+
+        elif b'Timeout waiting for VSYNC' in inbytes:
+            timeout = True
+            print('Timeout waiting for VSYNC')
+
+        else:
+            timedelta = datetime.now() - startwait
+            if timedelta.total_seconds() > TIMEOUT_AFTER_SECONDS * 4:
+                timeout = True
+                print(waitbytes)
+                print('Timeout')
+                continue
+
+    if timeout:
+        ESPCAM.write(b'reset;')
+        ESPCAM.close()
+        sleep(5)
+        continue
+
     sleep(3)
-    ESPCAM.read(ESPCAM.in_waiting);
+    ESPCAM.read(ESPCAM.in_waiting)
     sleep(3)
 
     print("Start reading")
@@ -67,6 +105,7 @@ while True:
 
     timeouttimer = datetime.now()
     timeout = False
+    reason = 'Timeout'
     running = True
     while running:
         # read data from serial port
@@ -74,14 +113,16 @@ while True:
             inbytes = ESPCAM.read(ESPCAM.in_waiting)
             for b in inbytes:
                 rgbytes.append(b)
+           
             print("\r{}%".format(round(len(rgbytes) / IMAGE_BYTES * 100)), end="")
+            
             timeouttimer = datetime.now()
 
         if len(rgbytes) >= IMAGE_BYTES:
             running = False
 
         timedelta = datetime.now() - timeouttimer
-        if timedelta.total_seconds() > 1:
+        if timedelta.total_seconds() > TIMEOUT_AFTER_SECONDS:
             timeout = True
             running = False
 
@@ -91,7 +132,7 @@ while True:
     ESPCAM.close()
 
     if timeout:
-        print('Timeout')
+        print(reason)
         if len(rgbytes) > 0:
             print(rgbytes)
         sleep(10)
@@ -111,9 +152,9 @@ while True:
             for x in range(width):
                 i = ((y * width) + x) * 3
                 array[y, x] = [
-                    rgbytes[i+2], #B
-                    rgbytes[i+1], #G
-                    rgbytes[i] #R
+                    rgbytes[i+2],  # B
+                    rgbytes[i+1],  # G
+                    rgbytes[i]  # R
                 ]
 
         finish = True
